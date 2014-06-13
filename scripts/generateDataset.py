@@ -125,6 +125,7 @@ def randRotationParallelWork(params):
     numpy.random.seed()
   
   rand_matrix = numpy.random.randn
+  fig = pylab.figure() #for plotting use
 
   for i in range(0, rotations):
     correct, rotation_matrix, seed_matrix = randomRotationMatrix(dimensions, rand_matrix)
@@ -153,7 +154,7 @@ def randRotationParallelWork(params):
         matrix_file.write(line + "\n")
 
     rotation = numpy.dot(rotation_matrix[0:2], points)
-    plot2DHist(rotation, data_dir_path + "/images/{0}".format(cur_principal_angle), 0, 1)
+    plot2DHist(rotation, data_dir_path + "/images/{0}".format(cur_principal_angle), 0, 1, fig)
 
 
 
@@ -194,7 +195,7 @@ def randomRotationMatrix(dims, rand_matrix):
   #q is a valid rotation matrix, seed_matrix is random matrix used in QR decomp to produce Q
   return True, q, seed_matrix
 
-def plot2DHist(points, name, x_dimension, y_dimension):
+def plot2DHist(points, name, x_dimension, y_dimension, fig):
   
   #add points to data at each corner, truncate data past corners.
 
@@ -223,7 +224,7 @@ def plot2DHist(points, name, x_dimension, y_dimension):
 
   #pylab.axis("off")
   
-  fig = pylab.figure()
+  #fig = pylab.figure()
   dpi = fig.get_dpi()
   inches = 512.0 / dpi
   fig.set_size_inches(inches,inches)
@@ -234,7 +235,7 @@ def plot2DHist(points, name, x_dimension, y_dimension):
   pylab.hist2d(x, y, bins=100)
   pylab.set_cmap('gray')
   pylab.savefig(name + '.png')
-
+  pylab.clf()
 
 if __name__=='__main__':
 
@@ -309,7 +310,7 @@ if __name__=='__main__':
     generateRandomRotations(points, sim_rotation_matrix, options.dims, options.rotations, options.para, norm_matrix, options.seed, data_dir_path)
     
 
-    print "Done"
+    #print "Done"
 
     if options.timing == 1:
       print (time.time() - start)
