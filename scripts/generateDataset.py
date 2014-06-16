@@ -88,10 +88,12 @@ def generateSimulatedDataset(points, dimensions, rand_matrix):
  
   points = numpy.dot(rotation_matrix, points)
 
+
+
   return points, rotation_matrix
 
 
-def generateRandomRotations(points, sim_rotation_matrix, dimensions, rotations, parallelization, rand_matrix, seed, data_dir_path):
+def generateRandomRotations(points, sim_rotation_matrix, dimensions, rotations, parallelization, seed, data_dir_path):
 
   rots_per_process = int(rotations/parallelization)
   pool = multiprocessing.Pool(processes=parallelization)
@@ -157,6 +159,88 @@ def randRotationParallelWork(params):
     plot2DHist(rotation, data_dir_path + "/images/{0}".format(cur_principal_angle), 0, 1, fig)
 
 
+def generateSimilarRotations(data_dir_path, similar_dir_path, sim_points, seed_matrix, simulated_rot_matrix, rotations, similarity_factor, parallelization, seed):
+  
+  dims = len(seed_matrix)
+
+  rots_per_process = int(rotations/parallelization)
+  pool = multiprocessing.Pool(processes=parallelization)
+  
+  param_arr = []
+  for i in range(0, parallelization):
+    if seed != -1:
+      param_arr.append((sim_points, rots_per_process, dims, simulated_rot_matrix, seed_matrix, similarity_factor, seed+i, data_dir_path, similar_dir_path))
+    else:
+      param_arr.append((sim_points, rots_per_process, dims, simulated_rot_matrix, seed_matrix, similarity_factor, seed, data_dir_path, similar_dir_path))
+
+  pool.map(similarRotationParallelWork, param_arr)
+  pool.close() #POOL'S CLOSED!
+
+  pool.join()
+
+def similarRotationParallelWork(params):
+  points = params[0]
+  rotations = params[1]
+  dims = params[2]
+  sim_rotation_matrix = params[3]
+  seed_matrix = params[4]
+  similarity_factor = params[5]
+  seed = params[6]
+  data_dir_path = params[7]
+  similar_dir_path = params[8]
+
+  #initialize random number generators
+  if seed != -1:
+    numpy.random.seed(seed)
+  else:
+    numpy.random.seed()
+
+
+
+  fig = pylab.figure() #for plotting
+
+  for i in range(0, rotations):
+    
+    diff_matrix = numpy.random.uniform(low=-1 * (similarity_factor), high=similarity_factor, size=(dims,dims))
+    new_seed_matrix = seed_matrix + diff_matrix
+
+    correct, rotation_matrix = similarRotationMatrix(dims, new_seed_matrix)
+    while correct is False:
+      correct, rotation_matrix = similarRotationMatrix(dims, new_seed_matrix)
+
+    #calc principal angle
+    sim_rotation_matrix = numpy.array(sim_rotation_matrix)
+    A = sim_rotation_matrix.T[0:3].T
+    B = rotation_matrix[0:2].T
+    cur_principal_angle = principal_angle(A, B)
+ 
+    #print out rotation_matrix, seed_matrix, image w/prin angle 
+    with open(data_dir_path + "/info/{0}_seed_matrix.txt".format(cur_principal_angle), 'w') as matrix_file:
+      for i in range(0, len(seed_matrix)):
+        line = "{0}".format(seed_matrix[i][0])
+        for j in range(1, len(seed_matrix[i])):
+          line = line + ",{0}".format(seed_matrix[i][j])
+        matrix_file.write(line + "\n")
+
+
+
+    with open(data_dir_path + "/info/{0}_rotation_matrix.txt".format(cur_principal_angle), 'w') as matrix_file:
+      for i in range(0, len(rotation_matrix)):
+        line = "{0}".format(rotation_matrix[i][0])
+        for j in range(1, len(rotation_matrix[i])):
+          line = line + ",{0}".format(rotation_matrix[i][j])
+        matrix_file.write(line + "\n")
+
+    rotation = numpy.dot(rotation_matrix[0:2], points)
+
+    #save image twice, once in entire dataset folder, once in similar dataset folder
+    filename = data_dir_path + "/images/{0}.png".format(cur_principal_angle)
+    sim_filename = similar_dir_path + "/{0}.png".format(cur_principal_angle)
+
+    plot2DHist(rotation, data_dir_path + "/images/{0}".format(cur_principal_angle), 0, 1, fig)
+    cmd = "cp {0} {1}".format(filename, sim_filename)
+    subprocess.call(cmd, shell=True)
+
 
 
 def principal_angle(A, B):
@@ -165,12 +249,42 @@ def principal_angle(A, B):
   return numpy.arccos(min(svd[1].min(), 1.0))
 
 
+
+def similarRotationMatrix(dims, seed_matrix):
+
+  err = .000001 #error allowed for in imprecise computer math
+
+  q, r = numpy.linalg.qr(seed_matrix)
+
+  #verify Q is a rotation matrix
+  det = numpy.linalg.det(q)
+  #if det is not 1
+  if det > 1.0 + err or det < 1.0 - err:
+    #fix for a proper rotation: if det is -1, improper rotation. try to fix.
+    q[0] = q[0] * -1
+    # check again    
+    det = numpy.linalg.det(q)
+    if det > 1.0 + err or det < 1.0 - err:
+      #could not fix
+      return False, q
+  
+
+  inv = numpy.linalg.inv(q)
+  for i in range(dims):
+    for j in range(dims):
+      if q.T[i][j] - inv[i][j] > err or q.T[i][j] - inv[i][j] < -err:
+        #inverse does not equal transpose, not a rotation matrix
+        return False, q
+  #q is a valid rotation matrix, seed_matrix is random matrix used in QR decomp to produce Q
+  return True, q
+
+
 def randomRotationMatrix(dims, rand_matrix):
 
   err = .000001 #error allowed for in imprecise computer math
 
   #seed_matrix will be important later when attempting similar rotations
-  seed_matrix = norm_matrix(dims, dims)
+  seed_matrix = rand_matrix(dims, dims)
   q, r = numpy.linalg.qr(seed_matrix)
 
   #verify Q is a rotation matrix
@@ -267,18 +381,21 @@ if __name__=='__main__':
                      default=2, help="Specify how many parallel processes to use when generating random rotations", 
 			metavar="#PARA")
 
+  parser.add_option("-f", "--similar", type="float", dest="similar",
+                     default=-1.0, help="Specify principal angle of rotation to generate similar rotations", 
+			metavar="#SIMI")
+  parser.add_option("-v", "--similarityfactor", type="float", dest="similarfac",
+                     default=0.1, help="Specify how similar the rotations should be (TODO: experiment with this)", 
+			metavar="#SIMI")
 
   (options, args) = parser.parse_args()
-  start = 0
-  if options.timing == 1:
-    start = time.time()
 
   #check for project home environment variable 
   try:
     FNULL = open(os.devnull, 'w')
     hiddencube_home = os.environ['HIDDENCUBE_HOME']
     data_dir_path = hiddencube_home + "/datasets/" + options.setname
-
+    
     #initialize random number generators
     if options.seed != -1:
       numpy.random.seed(options.seed)
@@ -289,31 +406,111 @@ if __name__=='__main__':
     unif = numpy.random.uniform
     rand_int = numpy.random.randint
     norm_matrix = numpy.random.randn
-
-    points = generateHyperSphereNoise(options.N, options.dims, norm, unif)
-    points = generateCube(points, 0, options.N, rand_int, unif, norm_matrix)
-    
-    #plot2DHist(points, 'startCube', 0, 1)
-
-    points, sim_rotation_matrix = generateSimulatedDataset(points, options.dims, norm_matrix)
-
-    #plot2DHist(points, 'sim', 0, 1)
  
-    #create dataset directory structure
-    cmd = 'rm -rf {0}'.format(data_dir_path)
-    subprocess.call(cmd, shell=True, stdout=FNULL, stderr=FNULL)
-    cmd = 'mkdir -p {0}/info'.format(data_dir_path)
-    subprocess.call(cmd, shell=True, stdout=FNULL, stderr=FNULL)
-    cmd = 'mkdir -p {0}/images'.format(data_dir_path)
-    subprocess.call(cmd, shell=True, stdout=FNULL, stderr=FNULL)
+    if options.similar is not -1.0:
+      #generate similar rotations mode
 
-    generateRandomRotations(points, sim_rotation_matrix, options.dims, options.rotations, options.para, norm_matrix, options.seed, data_dir_path)
+      #set up directory structure
+      similar_dir_path = data_dir_path + "/" + str(options.similar) + "_similar_rotations"
+      cmd = 'mkdir -p {0}/'.format(similar_dir_path)
+      subprocess.call(cmd, shell=True, stdout=FNULL, stderr=FNULL)
+
+      #read in simulated dataset
+      sim_data_path = data_dir_path + "/info/simulatedDataset.txt"   
+      sim_points = []
+      text = ""
+      with open(sim_data_path, 'r') as sim_file:
+        text = sim_file.read()
+      text = text.split("\n")
+      text.remove(text[-1]) #last element is blank
+      for line in text:
+        elems = line.split(",")
+        tmp = [] 
+        for elem in elems:
+          tmp = numpy.append(tmp, float(elem))
+        sim_points.append(tmp)
+
+      #read in seed_matrix
+      seed_matrix_path = data_dir_path + "/info/" + str(options.similar) + "_seed_matrix.txt"    
+      seed_matrix = []
+      text = ""
+      with open(seed_matrix_path, 'r') as seed_file:
+        text = seed_file.read()   
+      text = text.split("\n")
+      text.remove(text[-1]) #last element blank
+      for line in text:
+        elems = line.split(",")
+        tmp = []
+        for elem in elems:
+          tmp = numpy.append(tmp, float(elem))
+        seed_matrix.append(tmp)
+
+      #read simulated rotation matrix
+      sim_rot_matrix = []
+      text = ""
+      with open(data_dir_path + "/info/simulated_rotation_matrix.txt", 'r') as sim_rot_file:
+        text = sim_rot_file.read()   
+      text = text.split("\n")
+      text.remove(text[-1]) #last element blank
+      for line in text:
+        elems = line.split(",")
+        tmp = []
+        for elem in elems:
+          tmp = numpy.append(tmp, float(elem))
+        sim_rot_matrix.append(tmp)
+
+
+      generateSimilarRotations(data_dir_path, similar_dir_path, sim_points, seed_matrix, sim_rot_matrix, options.rotations, options.similarfac, options.para, options.seed)
+
+
+    else:
+      #generate new dataset mode
+      start = 0
+      if options.timing == 1:
+        start = time.time()
+
+      points = generateHyperSphereNoise(options.N, options.dims, norm, unif)
+      points = generateCube(points, 0, options.N, rand_int, unif, norm_matrix)
+    
+      #plot2DHist(points, 'startCube', 0, 1)
+
+      points, sim_rotation_matrix = generateSimulatedDataset(points, options.dims, norm_matrix)
+
+      #plot2DHist(points, 'sim', 0, 1)
+ 
+      #create dataset directory structure
+      cmd = 'rm -rf {0}'.format(data_dir_path)
+      subprocess.call(cmd, shell=True, stdout=FNULL, stderr=FNULL)
+      cmd = 'mkdir -p {0}/info'.format(data_dir_path)
+      subprocess.call(cmd, shell=True, stdout=FNULL, stderr=FNULL)
+      cmd = 'mkdir -p {0}/images'.format(data_dir_path)
+      subprocess.call(cmd, shell=True, stdout=FNULL, stderr=FNULL)
+
+      #save simulated dataset to file
+      with open(data_dir_path + "/info/simulatedDataset.txt", "w") as sim_file:
+        for i in range(0, len(points)):
+          line = "{0}".format(points[i][0])
+          for j in range(1, len(points[i])):
+            line = line + ",{0}".format(points[i][j])
+          sim_file.write(line + "\n")
+     
+
+      #save simulated rotation matrix to file
+      with open(data_dir_path + "/info/simulated_rotation_matrix.txt", "w") as sim_rot_file:
+        for i in range(0, len(sim_rotation_matrix)):
+          line = "{0}".format(sim_rotation_matrix[i][0])
+          for j in range(1, len(sim_rotation_matrix[i])):
+            line = line + ",{0}".format(sim_rotation_matrix[i][j])
+          sim_rot_file.write(line + "\n")
+
+
+      generateRandomRotations(points, sim_rotation_matrix, options.dims, options.rotations, options.para, options.seed, data_dir_path)
     
 
-    #print "Done"
+      #print "Done"
 
-    if options.timing == 1:
-      print (time.time() - start)
+      if options.timing == 1:
+        print (time.time() - start)
 
   except KeyError:
     print "\t ERROR: You need to set the HIDDENCUBE_HOME environment variable to the path to the home directory of this project.  Execute a command similar to 'export HIDDENCUBE_HOME=/home/ncarey/gitrepos/HiddenCubeDataset'"
